@@ -7,7 +7,9 @@ import threading
 import os
 import sys
 # Define ip and ports
-
+enable_cache=1
+if enable_cache:
+    cache={}
 catalog_ip = os.getenv("CATALOG_SERVER")
 if not catalog_ip:
     catalog_ip=socket.gethostbyname("CATALOG_SERVER")
@@ -23,22 +25,31 @@ for i in range(order_server_num):
 order_port=8081
 current_order_server_id=0
 
+
 class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+        global cache
         print(threading.currentThread().getName())
-        s = socket.socket()        
-        # connect to the catalog server
-        s.connect((catalog_ip,catalog_port))
-        s.send(("lookup "+self.path[1:]).encode())#the stock name can be obtained from self.path
-        # receive data from the server and decoding to get the string.
-        reply=s.recv(1024).decode()
-        # close the connection
-        s.close()
-        #the reply string consists of status code of the operation, along with fields of the corresponding stock, seperated by space
-        reply=reply.split(" ") 
+        stock_name=self.path[1:]
+        
+        if not enable_cache or not (stock_info:=cache.get(stock_name)):
+            s = socket.socket()        
+            # connect to the catalog server
+            s.connect((catalog_ip,catalog_port))
+            s.send(("lookup "+self.path[1:]).encode())#the stock name can be obtained from self.path
+            # receive data from the server and decoding to get the string.
+            reply=s.recv(1024).decode()
+            # close the connection
+            s.close()
+            #the reply string consists of status code of the operation, along with fields of the corresponding stock, seperated by space
+            reply=reply.split(" ") 
+        else:
+            reply = [1,stock_name]+stock_info
         status_code=(int)(reply[0])
         if status_code > 0:
+            if enable_cache:
+                cache[reply[1]]=reply[2:]
             reply_json={
                 "data": {
                     "name": reply[1],
@@ -97,6 +108,8 @@ class Handler(BaseHTTPRequestHandler):
         s.close()
         #the reply for trade operation is a single status code 
         if reply >= 0:#transaction number(an unsigned number start from 0) will be returned if the action is successful, 
+            if enable_cache:
+                cache.pop(json_arg["name"]) #if the transaction success, invaildate the coresponding cached value,if there is any.
             reply_json={
                 "data": {
                     "transaction_number": reply
@@ -123,4 +136,6 @@ def run():
 
 
 if __name__ == '__main__':
+    enable_cache=sys.argv[1]
+
     run()
