@@ -36,14 +36,14 @@ class ReplicaController{
 	typedef std::unique_ptr<std::thread,void(*)(std::thread*)> ThreadUniptr;
 	class LeaderInterface{
 	private:
-		const long* follower_ips;
+		const in_addr_t* follower_ips;
 		const unsigned follower_port;
 		const unsigned follower_num;
 
 		std::vector<SocketUniptr> socket2followers;
 		std::fstream* file;
 	public:
-		LeaderInterface(const long* follower_ips, const unsigned follower_port, const unsigned follower_num,std::fstream* file)
+		LeaderInterface(const in_addr_t* follower_ips, const unsigned follower_port, const unsigned follower_num,std::fstream* file)
 		:follower_ips(follower_ips),follower_port(follower_port),follower_num(follower_num),file(file)
 		{
 			
@@ -58,29 +58,36 @@ class ReplicaController{
 				follower_addr.sin_addr.s_addr = follower_ips[i];
 	
 				connect(*socket2followers[i], (struct sockaddr*)&follower_addr, sizeof(follower_addr));
+				DEBUG("Finish connecting to a follower");
 			}
 		}
 		void Syn2followers(const char* log){
 			for(int i=0;i<follower_num;i++){
-				if(send(*socket2followers[i],log,strlen(log),0)<0){
-					if(errno==ECONNRESET||errno==ENOTCONN){
+				if(send(*socket2followers[i],log,strlen(log),MSG_NOSIGNAL)<0){
+					if(errno==EPIPE||errno==ECONNRESET||errno==ENOTCONN){
+						DEBUG("follower disconnection detected");
 						//follower is down,try to see if it's up this time 
+						socket2followers[i].reset(new int(socket(AF_INET, SOCK_STREAM, 0)));
 						sockaddr_in follower_addr;
 						follower_addr.sin_family = AF_INET;
         				follower_addr.sin_port = htons(follower_port);
 						follower_addr.sin_addr.s_addr = follower_ips[i];
 	
 						if(connect(*socket2followers[i], (struct sockaddr*)&follower_addr, sizeof(follower_addr))==0){
+							DEBUG("reconnect success");
 							//follower goes up again, synchronize everything with him
 							send(*socket2followers[i],"-1",2,0);//indicate follower we are going to the whole log file content and let him get prepered
 							file->seekg(ID_LENGTH+1,std::ios_base::beg);
 							std::string line;
 							while(std::getline(*file,line)){
+								line+="\n";
 								send(*socket2followers[i],line.c_str(),line.size(),0);
 							}
-						}	
+							DEBUG("Finish sending curent log file content to the reconnected follower,The last line is:");
+							DEBUG(line);
+						}	else DEBUG("reconnecting failed");
 					}else throw std::runtime_error("error sending to follower");
-				}
+				}else {DEBUG("finish sending log to a follower:");DEBUG(log);}
 			}
 		}
 	};
@@ -88,7 +95,7 @@ class ReplicaController{
 private:
 	const unsigned host_id;
 	unsigned replica_num;
-	std::unique_ptr<long[]> replica_ips;
+	std::unique_ptr<in_addr_t[]> replica_ips;
 	const unsigned follower_port;
 	std::unique_ptr<LeaderInterface> leader_inf;//construct only after currrent node becomes a leader
 	
@@ -107,7 +114,7 @@ public:
 	host_id(id),
 	follower_port(port),
 	replica_num(stoi(std::string(getenv("ORDER_SERVER_NUM")))),
-	replica_ips(new long[replica_num]),
+	replica_ips(new in_addr_t[replica_num]),
 	socket_from_leader(new int(socket(AF_INET, SOCK_STREAM, 0)),[](int* s){close(*s);delete s;}),
 	following_thread(nullptr,[](std::thread* t){}),
 	file(new std::fstream(order_log_file,std::ios_base::in|std::ios_base::out),[](std::fstream* file){file->close();delete file;})
@@ -121,7 +128,7 @@ public:
 			char buf[20];
 			sprintf(buf,"ORDER_SERVER_%d",i);
 			char *tmp=getenv(buf);
-			long ip;
+			in_addr_t ip;
 			if(!tmp){
 				struct hostent *host;
 				if ((host = gethostbyname(buf)) == NULL) throw std::runtime_error("replica host resolution error");
@@ -134,6 +141,8 @@ public:
 
 		following_thread=ThreadUniptr(new std::thread(&ReplicaController::HearingFromLeader,this),[](std::thread* t){
 			pthread_cancel(t->native_handle());
+			sleep(5);
+			DEBUG("Finish pthread cancel");
 			t->join();
 			delete t;
 		});
@@ -154,6 +163,7 @@ public:
 		std::unique_lock<std::mutex> lock(mutex);
 		s<<std::setfill('0')<<std::setw(ID_LENGTH)<<next_order_no<<std::setfill(' ')<<std::setw(NAME_LENGTH+1)<<stock_name<<std::setfill(' ')<<std::setw(TRADE_NUM_LENGTH+1)<<trade_num<<std::endl;
 		std::string tmp=s.str();
+		DEBUG(tmp);
 		*file<<tmp;
 		leader_inf->Syn2followers(tmp.c_str());
 		return next_order_no++;
@@ -165,7 +175,7 @@ public:
 	}
 private:
 	void StopFollowing(){
-		following_thread.release();
+		following_thread.reset();
 	}
 	void HearingFromLeader(){
 		try{
@@ -179,8 +189,10 @@ private:
 			if (listen(*socket_from_leader, 3) < 0) throw std::runtime_error("error listening socket_from_leader");
 
 			int incoming_sock;
-			char buf[LOG_LENGTH];
+			char buf[LOG_LENGTH+1];
+			memset(buf,0,LOG_LENGTH+1);
 			while(1){
+				DEBUG("follower ready accepting connection from new leader");
 				//accept a connection, call the user defined "BuildJob" to get a Job and push it into the queue
 				if ((incoming_sock = accept(*socket_from_leader, (struct sockaddr*)&address,(socklen_t*)&addrlen))< 0) {
 					if(errno==EINTR){
@@ -188,24 +200,32 @@ private:
 					}
 					throw std::runtime_error("error accepting socket_from_leader");
 				}
+				SocketUniptr incoming_sock_ptr(new int(incoming_sock),[](int* p){close(*p);delete p;});
 				while(1){
-					if(read(*socket_from_leader, buf, LOG_LENGTH)<0){
-						if(errno==ECONNRESET||errno==EINTR){
+					int ret;
+					if((ret=read(*incoming_sock_ptr, buf, LOG_LENGTH))<=0){
+						if(ret==0||errno==ECONNRESET||errno==EINTR){
 							//leader crashed, waiting for new leader to setup connection again, otherwise a SIGINT has received, ready to stop.
+							if(errno==ECONNRESET) DEBUG("disconnect from current leader");
+							else DEBUG("Following interupted by signal ");
 							break;
 						}
 						throw std::runtime_error("error read from leader");
 					}else{
+						DEBUG("Successfuly read something from leader:");
+						DEBUG(buf);
 						pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,NULL);
 						std::stringstream s(buf);
 						long long order_id;
 						s>>order_id;
 						if(order_id<0){
+							
 							//synchronization from leader
 							//erase the entire log file and wait for leader to send its copy
 							file->seekp(std::ios_base::beg);
 							*file<<std::setfill('0') << std::setw(ID_LENGTH)<<0<<std::endl;
 							next_order_no=0;
+							DEBUG("Local log being reset");
 						}else{
 							//a replica can be following and leading at the same time, and since the follower get log from leader in a serial manner,no synchronization
 							//is needed here
@@ -276,10 +296,7 @@ public:
 		memset((void*)reply,'\0',sizeof(reply));
 		int socket_to_catalog_server;
 		if(arg_list[0] == "trade"){
-			if ((socket_to_catalog_server = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-				perror("catalog server socket creation failed");
-				exit(EXIT_FAILURE);
-			}
+			if ((socket_to_catalog_server = socket(AF_INET, SOCK_STREAM, 0)) < 0) throw std::runtime_error("socket2catalogserver creation error");
 			if ((connect(socket_to_catalog_server, (struct sockaddr*)&catalog_serv_addr, sizeof(catalog_serv_addr)))< 0) {
 				perror("cannot connect to catalog server");
 				memcpy((void*)reply,(const void*)"-200",5);

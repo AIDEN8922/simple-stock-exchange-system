@@ -23,7 +23,7 @@ for i in range(order_server_num):
         order_ip=socket.gethostbyname(server_name)
     order_ips.append(order_ip)
 order_port=8081
-current_order_server_id=0
+current_order_server_id=1
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
         #the reply for trade operation is a single status code 
         if reply >= 0:#transaction number(an unsigned number start from 0) will be returned if the action is successful, 
             if enable_cache:
-                cache.pop(json_arg["name"]) #if the transaction success, invaildate the coresponding cached value,if there is any.
+                cache.pop(json_arg["name"],None) #if the transaction success, invaildate the coresponding cached value,if there is any.
             reply_json={
                 "data": {
                     "transaction_number": reply
