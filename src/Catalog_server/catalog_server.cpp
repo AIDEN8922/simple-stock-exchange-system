@@ -103,7 +103,7 @@ int main() {
 	try{
 		CatalogServer server("data/catalog.txt");
 		server.Start("0.0.0.0",8080,10);
-	}catch(std::exception e){
+	}catch(std::exception &e){
 		perror(e.what());
 	}
 }

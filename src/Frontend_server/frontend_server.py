@@ -23,7 +23,7 @@ for i in range(order_server_num):
         order_ip=socket.gethostbyname(server_name)
     order_ips.append(order_ip)
 order_port=8081
-current_order_server_id=1
+current_order_server_id=0
 
 
 class Handler(BaseHTTPRequestHandler):

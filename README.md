@@ -5,35 +5,19 @@ Spring 2023
 
 # Lab 3: Asterix and Double Trouble  --  Replication, Caching, and Fault Tolerance
 
-## Goals and Learning Outcomes
+## how to run
+features required by part1 to part4(except AWS part)and implemented in the same set of code in the "src" folder. just run and test all three features.
 
-The lab has the following learning outcomes with regard to concepts covered in class.
+in the setup_environment.sh, modify the environmental variable setting: set the ip address of catalog server, and order servers respectly. copy the edited scripts and run it on the terminal(uses source or .) of every machines where order servers and frontend server will be running, they all use the same environmental setup.
 
-* Learn about caching, replication, and consistency.
-* Learn about the concepts of fault tolerance and high availability.
-* Learn about how to deploy your application on the cloud.
+the server programs are complied already in the subfolders of src directory, you are boot the servers in any order, but before issuing the requests, make sure all servers are up(unless in test fault tolarence test setting). run catalog server as ./catalog server. run order servers as ./order_server ORDER_SERVER_ID, where the ORDER_SERVER_ID is a integer that correspond to what is configured in the setup_environment.sh. run frontend server as python3 frontend_server.py ENABLE_CACHE. replace ENABLE_CACHE with 1 or 0. 
 
-## Information about your submission
-
-1. Name and email: add your name and email here.
-2. Team member name and email: add team member info. say none if this is a solo submission
-3. Number of late days used for this lab: say zero if none used
-4. Number of late days used so far including this lab: say zero if none used.
-
-## Instructions
-
-1. You may work in groups of two for this lab. If you decide to work in groups, you should briefly
-   describe how the work is divided between the two team members in your README file. Be sure to
-   list the names of all team members at the top of this README file.
-2. You can use either Python or Java for this assignment. You may optionally use C++, but TA support
-   for C++ issues will be limited. For this lab you may use different languages for different
-   microservices if you want.
-3. Do's and don'ts:
-   * discuss lab with other students: allowed
-   * use of AI tools: allowed with attribution (be sure to read the policy in course syllabus)
-   * use code from others/Internet/friends/coders for hire: disallowed
-   * ask TAs for clarifications/help: always allowed
-
+Noted that
+1.order server will detect the inconsistency in the order_log. Once detected, it will shutdown itself. It is user's job to bring it up again so that it can be synchronized by the leader.
+2.for a graceful termination, terminated the leading order server first. then terminate the following order server in any order. The leader are choosed in a round-robin manor if the exsiting one goes down, there will be a output if one of the order_server becomes the leader and user may use it as a clue to terminate the system gracefully
+3.An error saying: "bind failed, address already in use" will pomp up if one shut down order server and restarted it to quickly, that's because even if we close the socket and release the resource when program end, TCP will still entering time_wait state for a minute or two just to make sure any lingering packet that later arrive would cause any program to the newly created connection. Just wait and sip some coffee before you bring up the order server again. 
+## design ideas
+see README.md located in the src subfolder
 ## Lab Description
 
 The Gauls have really taken to stock trading and trading has become their village pass time. To ensure 
