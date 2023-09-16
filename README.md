@@ -64,7 +64,7 @@ algorithm
 We also want to make sure that when a crashed replica is back online, it can synchronize with the
 other replicas to retrieve the order information that it has missed during the offline time. .
 
-### Testing and Evaluation with Deployment on AWS
+### Deploy to the cloud
 
 we want our stock service to be available on the cloud
 
